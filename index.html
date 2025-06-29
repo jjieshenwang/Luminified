@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Light Control Project</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: sans-serif; }
+    body {
+      background: linear-gradient(135deg, #1e1e1e, #2a2a2a);
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem;
+    }
+    h1 { margin-bottom: 1rem; }
+    button, select, input[type=range] {
+      margin: 0.5rem;
+      padding: 0.75rem;
+      font-size: 1rem;
+      border: none;
+      border-radius: 10px;
+      background: #333;
+      color: #fff;
+    }
+    .tab {
+      margin-bottom: 1rem;
+    }
+    .panel {
+      display: none;
+      width: 100%;
+      max-width: 600px;
+      background: rgba(255,255,255,0.05);
+      padding: 1rem;
+      border-radius: 1rem;
+      backdrop-filter: blur(10px);
+    }
+    .active {
+      display: block;
+    }
+    .slider {
+      width: 100%;
+    }
+    .overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      pointer-events: none;
+      background: #000;
+      opacity: 0;
+      transition: opacity 0.2s ease-in-out;
+      z-index: 0;
+    }
+    .output {
+      font-size: 3rem;
+      margin-top: 1rem;
+      text-align: center;
+    }
+    .log {
+      margin-top: 1rem;
+      max-height: 300px;
+      overflow-y: auto;
+      font-family: monospace;
+      background: rgba(255,255,255,0.1);
+      padding: 0.5rem;
+      border-radius: 0.5rem;
+    }
+    .status {
+      margin-top: 0.5rem;
+      font-size: 0.9rem;
+      opacity: 0.7;
+    }
+  </style>
+</head>
+<body>
+  <h1>Light Control Project</h1>
+  <div class="tab">
+    <select id="modeSelector">
+      <option value="phone">Phone Controller</option>
+      <option value="laptop">Laptop Monitor</option>
+    </select>
+  </div>
+
+  <div id="phonePanel" class="panel">
+    <label for="brightnessSlider">Brightness: <span id="brightnessValue">50</span>%</label>
+    <input type="range" min="0" max="100" value="50" class="slider" id="brightnessSlider" />
+    <button id="holdButton">📌 Hold for Measurement</button>
+    <p class="status" id="phoneStatus">Ambient lux: <span id="luxReading">0</span></p>
+    <div class="overlay" id="overlay"></div>
+  </div>
+
+  <div id="laptopPanel" class="panel">
+    <div class="output">
+      <div>Lux: <span id="luxDisplay">---</span></div>
+    </div>
+    <div class="status" id="connStatus">Checking connection...</div>
+    <div class="log" id="dataLogBox"></div>
+    <button id="exportBtn">⬇ Export CSV</button>
+  </div>
+
+  <script>
+    const modeSelector = document.getElementById('modeSelector');
+    const phonePanel = document.getElementById('phonePanel');
+    const laptopPanel = document.getElementById('laptopPanel');
+
+    modeSelector.addEventListener('change', () => {
+      phonePanel.classList.remove('active');
+      laptopPanel.classList.remove('active');
+      if (modeSelector.value === 'phone') phonePanel.classList.add('active');
+      else laptopPanel.classList.add('active');
+    });
+
+    phonePanel.classList.add('active');
+
+    const overlay = document.getElementById('overlay');
+    const brightnessSlider = document.getElementById('brightnessSlider');
+    const brightnessValue = document.getElementById('brightnessValue');
+    const luxReading = document.getElementById('luxReading');
+    const holdButton = document.getElementById('holdButton');
+
+    let currentLux = 0;
+    let measuring = false;
+
+    function updateOverlay(val) {
+      overlay.style.opacity = 1 - val / 100;
+    }
+
+    function simulateLux(brightness) {
+      const noise = (Math.random() - 0.5) * 20;
+      return Math.max(0, brightness * 10 + noise);
+    }
+
+    async function readLuxSensor() {
+      try {
+        const sensor = new AmbientLightSensor();
+        sensor.onreading = () => currentLux = sensor.illuminance;
+        sensor.onerror = () => {};
+        sensor.start();
+      } catch {
+        setInterval(() => {
+          currentLux = simulateLux(parseInt(brightnessSlider.value));
+        }, 1000);
+      }
+    }
+
+    if ('AmbientLightSensor' in window) {
+      readLuxSensor();
+    } else {
+      setInterval(() => {
+        currentLux = simulateLux(parseInt(brightnessSlider.value));
+      }, 1000);
+    }
+
+    brightnessSlider.addEventListener('input', () => {
+      brightnessValue.textContent = brightnessSlider.value;
+      updateOverlay(brightnessSlider.value);
+    });
+
+    function updatePhoneData() {
+      if (measuring) return;
+      const state = {
+        brightness: parseInt(brightnessSlider.value),
+        lux: currentLux,
+        timestamp: new Date().toLocaleTimeString(),
+        stable: false,
+        lastUpdate: Date.now()
+      };
+      localStorage.setItem('lightData', JSON.stringify(state));
+      luxReading.textContent = currentLux.toFixed(1);
+    }
+
+    setInterval(updatePhoneData, 1000);
+
+    holdButton.addEventListener('click', () => {
+      if (measuring) return;
+      measuring = true;
+      holdButton.disabled = true;
+      brightnessSlider.disabled = true;
+      let readings = [];
+      const brightness = parseInt(brightnessSlider.value);
+      let count = 0;
+
+      const interval = setInterval(() => {
+        readings.push(currentLux);
+        count++;
+        if (count >= 10) {
+          clearInterval(interval);
+          const avgLux = readings.reduce((a, b) => a + b, 0) / readings.length;
+          const state = {
+            brightness,
+            lux: avgLux,
+            timestamp: new Date().toLocaleTimeString(),
+            stable: true,
+            lastUpdate: Date.now()
+          };
+          localStorage.setItem('lightData', JSON.stringify(state));
+          measuring = false;
+          brightnessSlider.disabled = false;
+          holdButton.disabled = false;
+        }
+      }, 1000);
+    });
+
+    const luxDisplay = document.getElementById('luxDisplay');
+    const connStatus = document.getElementById('connStatus');
+    const dataLogBox = document.getElementById('dataLogBox');
+    const exportBtn = document.getElementById('exportBtn');
+
+    let laptopLog = [];
+
+    function pollData() {
+      const data = JSON.parse(localStorage.getItem('lightData') || '{}');
+      if (!data || !data.lastUpdate) {
+        connStatus.textContent = 'No data';
+        return;
+      }
+      const age = Date.now() - data.lastUpdate;
+      if (age > 5000) {
+        connStatus.textContent = '⚠ Connection stale';
+      } else {
+        connStatus.textContent = '✅ Connected';
+        luxDisplay.textContent = data.lux.toFixed(1);
+        if (!laptopLog.length || laptopLog[laptopLog.length - 1].timestamp !== data.timestamp || data.stable) {
+          laptopLog.push(data);
+          const pin = data.stable ? '📌 ' : '';
+          const entry = `${pin}${data.timestamp} — Brightness: ${data.brightness}% | Lux: ${data.lux.toFixed(1)}`;
+          const div = document.createElement('div');
+          div.textContent = entry;
+          dataLogBox.prepend(div);
+        }
+      }
+    }
+
+    setInterval(pollData, 1000);
+
+    exportBtn.addEventListener('click', () => {
+      let csv = 'Timestamp,Brightness (%),Lux,Stable\n';
+      laptopLog.forEach(d => {
+        csv += `${d.timestamp},${d.brightness},${d.lux.toFixed(1)},${d.stable}\n`;
+      });
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'light_data.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  </script>
+</body>
+</html>
